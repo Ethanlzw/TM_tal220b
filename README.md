@@ -1,7 +1,7 @@
 # TM_tal220b
 Tension Measurement, Nucleo_g431rb
 
-## version 1.0 
+## 功能更新
 
 支持方向修正
 
@@ -11,7 +11,7 @@ Tension Measurement, Nucleo_g431rb
 
 支持快速高频更新
 
-## version 1.1 
+## 文件更新
 
 loadcell 文件集成到 tension_sensor
 
