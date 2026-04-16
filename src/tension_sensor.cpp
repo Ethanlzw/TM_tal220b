@@ -1,6 +1,8 @@
 #include "tension_sensor.h"
 #include <math.h>
 #include <stdint.h>
+#include <string.h>
+#include <stdio.h>
 
 // =========================
 // 默认参数
@@ -10,6 +12,11 @@ static float   s_filter_alpha             = 0.60f;     // 越大响应越快
 static float   s_deadband_N               = 0.02f;
 static uint8_t s_average_samples          = 1;         // 默认优先响应速度
 static int8_t  s_direction                = 1;         // +1 或 -1
+
+// 调试绘图
+static bool     s_plot_enabled   = true;
+static uint32_t s_plot_period_ms = 20;
+static uint32_t s_last_plot_ms   = 0;
 
 // =========================
 // 内部状态
@@ -24,6 +31,10 @@ static TensionData s_data = {0, 0.0f, 0.0f, false, 0};
 // HX711 默认 A 通道，增益 128
 static const uint8_t HX711_GAIN_PULSES = 1;
 
+// 串口命令缓冲
+static char    s_cmd_buf[96];
+static uint8_t s_cmd_len = 0;
+
 // =========================
 // 工具函数
 // =========================
@@ -37,6 +48,28 @@ static float clamp_float(float x, float xmin, float xmax)
 static inline void hx711_delay_us()
 {
     delayMicroseconds(1);
+}
+
+static char* trim_left(char* s)
+{
+    while (*s == ' ' || *s == '\t') {
+        s++;
+    }
+    return s;
+}
+
+static void trim_right(char* s)
+{
+    int n = (int)strlen(s);
+    while (n > 0) {
+        char c = s[n - 1];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            s[n - 1] = '\0';
+            n--;
+        } else {
+            break;
+        }
+    }
 }
 
 void tension_reset_filter()
@@ -180,6 +213,9 @@ void tension_init()
     s_data.force_N = 0.0f;
     s_data.valid = false;
     s_data.timestamp_ms = 0;
+
+    s_last_plot_ms = 0;
+    s_cmd_len = 0;
 }
 
 bool tension_update()
@@ -372,6 +408,249 @@ long tension_get_offset()
     return s_offset;
 }
 
+// =========================
+// 调试绘图
+// =========================
+void tension_set_plot_period_ms(uint32_t period_ms)
+{
+    if (period_ms < 5) {
+        period_ms = 5;
+    }
+    s_plot_period_ms = period_ms;
+}
+
+uint32_t tension_get_plot_period_ms()
+{
+    return s_plot_period_ms;
+}
+
+void tension_set_plot_enabled(bool enabled)
+{
+    s_plot_enabled = enabled;
+}
+
+bool tension_get_plot_enabled()
+{
+    return s_plot_enabled;
+}
+
+void tension_plot_update()
+{
+    if (!s_plot_enabled) {
+        return;
+    }
+
+    uint32_t now = millis();
+    if ((now - s_last_plot_ms) < s_plot_period_ms) {
+        return;
+    }
+    s_last_plot_ms = now;
+
+    if (s_data.valid) {
+        Serial.print(">force_N:");
+        Serial.println(s_data.force_N, 4);
+    }
+}
+
+// =========================
+// 状态与帮助
+// =========================
+void tension_print_help()
+{
+    Serial.println();
+    Serial.println("# commands:");
+    Serial.println("#   help");
+    Serial.println("#   status");
+    Serial.println("#   tare");
+    Serial.println("#   tare 20");
+    Serial.println("#   zero");
+    Serial.println("#   clearzero");
+    Serial.println("#   alpha 0.60");
+    Serial.println("#   dir 1");
+    Serial.println("#   dir -1");
+    Serial.println("#   deadband 0.02");
+    Serial.println("#   avg 1");
+    Serial.println("#   cal 10000");
+    Serial.println("#   period 20");
+    Serial.println("#   plot on");
+    Serial.println("#   plot off");
+    Serial.println();
+}
+
+void tension_print_status()
+{
+    Serial.println();
+    Serial.println("# status:");
+    Serial.print("#   valid            = "); Serial.println(s_data.valid ? 1 : 0);
+    Serial.print("#   raw_adc          = "); Serial.println(s_data.raw_adc);
+    Serial.print("#   raw_force_N      = "); Serial.println(s_data.raw_force_N, 6);
+    Serial.print("#   force_N          = "); Serial.println(s_data.force_N, 6);
+    Serial.print("#   timestamp_ms     = "); Serial.println(s_data.timestamp_ms);
+    Serial.print("#   offset           = "); Serial.println(s_offset);
+    Serial.print("#   zero_N           = "); Serial.println(s_software_zero_N, 6);
+    Serial.print("#   calibration      = "); Serial.println(s_calibration_counts_per_N, 6);
+    Serial.print("#   alpha            = "); Serial.println(s_filter_alpha, 6);
+    Serial.print("#   deadband_N       = "); Serial.println(s_deadband_N, 6);
+    Serial.print("#   avg_samples      = "); Serial.println(s_average_samples);
+    Serial.print("#   direction        = "); Serial.println(s_direction);
+    Serial.print("#   plot_enabled     = "); Serial.println(s_plot_enabled ? 1 : 0);
+    Serial.print("#   plot_period_ms   = "); Serial.println(s_plot_period_ms);
+    Serial.println();
+}
+
+// =========================
+// 串口命令处理
+// =========================
+static void handle_command(char* line)
+{
+    trim_right(line);
+    char* cmd = trim_left(line);
+
+    if (strlen(cmd) == 0) {
+        return;
+    }
+
+    int ival = 0;
+    float fval = 0.0f;
+
+    if (strcmp(cmd, "help") == 0 || strcmp(cmd, "h") == 0) {
+        tension_print_help();
+        return;
+    }
+
+    if (strcmp(cmd, "status") == 0 || strcmp(cmd, "s") == 0) {
+        tension_print_status();
+        return;
+    }
+
+    if (sscanf(cmd, "tare %d", &ival) == 1) {
+        if (ival < 1) {
+            ival = 1;
+        }
+
+        Serial.print("# tare start, samples = ");
+        Serial.println(ival);
+
+        if (tension_hardware_tare((uint8_t)ival)) {
+            Serial.print("# tare ok, offset = ");
+            Serial.println(s_offset);
+        } else {
+            Serial.println("# tare failed");
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "tare") == 0) {
+        Serial.println("# tare start, samples = 10");
+        if (tension_hardware_tare(10)) {
+            Serial.print("# tare ok, offset = ");
+            Serial.println(s_offset);
+        } else {
+            Serial.println("# tare failed");
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "zero") == 0) {
+        if (tension_software_zero()) {
+            Serial.print("# software zero ok, zero_N = ");
+            Serial.println(s_software_zero_N, 6);
+        } else {
+            Serial.println("# software zero failed");
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "clearzero") == 0) {
+        tension_clear_software_zero();
+        Serial.println("# software zero cleared");
+        return;
+    }
+
+    if (sscanf(cmd, "alpha %f", &fval) == 1) {
+        tension_set_filter_alpha(fval);
+        Serial.print("# alpha = ");
+        Serial.println(s_filter_alpha, 6);
+        return;
+    }
+
+    if (sscanf(cmd, "dir %d", &ival) == 1) {
+        tension_set_direction((ival >= 0) ? 1 : -1);
+        Serial.print("# direction = ");
+        Serial.println(s_direction);
+        return;
+    }
+
+    if (sscanf(cmd, "deadband %f", &fval) == 1) {
+        tension_set_deadband(fval);
+        Serial.print("# deadband_N = ");
+        Serial.println(s_deadband_N, 6);
+        return;
+    }
+
+    if (sscanf(cmd, "avg %d", &ival) == 1) {
+        tension_set_average_samples((uint8_t)ival);
+        Serial.print("# avg_samples = ");
+        Serial.println(s_average_samples);
+        return;
+    }
+
+    if (sscanf(cmd, "cal %f", &fval) == 1) {
+        if (tension_set_calibration(fval)) {
+            Serial.print("# calibration = ");
+            Serial.println(s_calibration_counts_per_N, 6);
+        } else {
+            Serial.println("# calibration set failed");
+        }
+        return;
+    }
+
+    if (sscanf(cmd, "period %d", &ival) == 1) {
+        tension_set_plot_period_ms((uint32_t)ival);
+        Serial.print("# plot_period_ms = ");
+        Serial.println(s_plot_period_ms);
+        return;
+    }
+
+    if (strcmp(cmd, "plot on") == 0) {
+        tension_set_plot_enabled(true);
+        Serial.println("# plot enabled");
+        return;
+    }
+
+    if (strcmp(cmd, "plot off") == 0) {
+        tension_set_plot_enabled(false);
+        Serial.println("# plot disabled");
+        return;
+    }
+
+    Serial.println("# unknown command, type 'help'");
+}
+
+void tension_serial_process()
+{
+    while (Serial.available() > 0) {
+        char c = (char)Serial.read();
+
+        if (c == '\r') {
+            continue;
+        }
+
+        if (c == '\n') {
+            s_cmd_buf[s_cmd_len] = '\0';
+            handle_command(s_cmd_buf);
+            s_cmd_len = 0;
+        } else {
+            if (s_cmd_len < sizeof(s_cmd_buf) - 1) {
+                s_cmd_buf[s_cmd_len++] = c;
+            }
+        }
+    }
+}
+
+// =========================
+// 电源控制
+// =========================
 void tension_power_down()
 {
     digitalWrite(TENSION_SCK_PIN, LOW);
