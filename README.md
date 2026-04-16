@@ -17,18 +17,31 @@ loadcell 文件集成到 tension_sensor
 
 ## 更新支持在线命令
 tare
+
 tare 20
+
 zero
+
 clearzero
+
 alpha 0.6
+
 dir -1
+
 deadband 0.02
+
 avg 1
+
 cal 10000
+
 period 20
+
 plot on
+
 plot off
+
 status
+
 help
 
 
