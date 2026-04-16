@@ -1,6 +1,8 @@
 # TM_tal220b
 Tension Measurement, Nucleo_g431rb
 
+## version 1.0 
+
 支持方向修正
 
 支持硬件去皮
