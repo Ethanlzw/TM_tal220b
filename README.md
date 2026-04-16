@@ -11,5 +11,8 @@ Tension Measurement, Nucleo_g431rb
 
 支持快速高频更新
 
+## version 1.1 
+
+loadcell 文件集成到 tension_sensor
 
 
