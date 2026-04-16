@@ -18,6 +18,9 @@ static bool     s_plot_enabled   = true;
 static uint32_t s_plot_period_ms = 20;
 static uint32_t s_last_plot_ms   = 0;
 
+// 关键新增：只在拿到新样本时输出一次
+static bool s_new_sample = false;
+
 // =========================
 // 内部状态
 // =========================
@@ -216,6 +219,7 @@ void tension_init()
 
     s_last_plot_ms = 0;
     s_cmd_len = 0;
+    s_new_sample = false;
 }
 
 bool tension_update()
@@ -248,6 +252,9 @@ bool tension_update()
     s_data.force_N = filtered_force_N;
     s_data.valid = true;
     s_data.timestamp_ms = millis();
+
+    // 关键新增：只有成功更新了新样本，才允许输出一次
+    s_new_sample = true;
 
     return true;
 }
@@ -302,6 +309,8 @@ bool tension_hardware_tare(uint8_t samples)
     s_data.valid = false;
     s_data.timestamp_ms = millis();
 
+    s_new_sample = false;
+
     return true;
 }
 
@@ -320,6 +329,8 @@ bool tension_software_zero()
 
     s_software_zero_N = raw_force_N;
     tension_reset_filter();
+    s_new_sample = false;
+
     return true;
 }
 
@@ -327,6 +338,7 @@ void tension_clear_software_zero()
 {
     s_software_zero_N = 0.0f;
     tension_reset_filter();
+    s_new_sample = false;
 }
 
 bool tension_set_calibration(float counts_per_N)
@@ -337,6 +349,8 @@ bool tension_set_calibration(float counts_per_N)
 
     s_calibration_counts_per_N = counts_per_N;
     tension_reset_filter();
+    s_new_sample = false;
+
     return true;
 }
 
@@ -349,6 +363,7 @@ void tension_set_filter_alpha(float alpha)
 {
     s_filter_alpha = clamp_float(alpha, 0.0f, 1.0f);
     tension_reset_filter();
+    s_new_sample = false;
 }
 
 float tension_get_filter_alpha()
@@ -391,6 +406,7 @@ void tension_set_direction(int8_t dir)
 {
     s_direction = (dir >= 0) ? 1 : -1;
     tension_reset_filter();
+    s_new_sample = false;
 }
 
 int8_t tension_get_direction()
@@ -440,11 +456,22 @@ void tension_plot_update()
         return;
     }
 
+    // 关键新增：没有新样本就不输出
+    if (!s_new_sample) {
+        return;
+    }
+
     uint32_t now = millis();
+
+    // 仍然保留最小输出周期限制
+    // 如果还没到时间，不清掉 s_new_sample
+    // 下一次 loop 里还会继续尝试输出这次新样本
     if ((now - s_last_plot_ms) < s_plot_period_ms) {
         return;
     }
+
     s_last_plot_ms = now;
+    s_new_sample = false;
 
     if (s_data.valid) {
         Serial.print(">force_N:");
@@ -495,6 +522,7 @@ void tension_print_status()
     Serial.print("#   direction        = "); Serial.println(s_direction);
     Serial.print("#   plot_enabled     = "); Serial.println(s_plot_enabled ? 1 : 0);
     Serial.print("#   plot_period_ms   = "); Serial.println(s_plot_period_ms);
+    Serial.print("#   new_sample       = "); Serial.println(s_new_sample ? 1 : 0);
     Serial.println();
 }
 
