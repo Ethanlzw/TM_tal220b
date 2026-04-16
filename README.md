@@ -15,7 +15,7 @@ Tension Measurement, Nucleo_g431rb
 
 loadcell 文件集成到 tension_sensor
 
-## 支持在线命令
+## 更新支持在线命令
 tare
 tare 20
 zero
