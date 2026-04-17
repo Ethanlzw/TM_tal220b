@@ -7,7 +7,6 @@ void setup()
     delay(1000);
 
     Serial.println();
-    Serial.println("=== Tension Sensor Demo With Serial Commands ===");
 
     tension_init();
 
@@ -16,7 +15,7 @@ void setup()
     tension_set_calibration(10000.0f);  // 改成你的真实标定值
     tension_set_filter_alpha(0.60f);
     tension_set_deadband(0.02f);
-    tension_set_average_samples(1);
+    tension_set_average_samples(5);
     tension_set_plot_period_ms(20);
     tension_set_plot_enabled(true);
 
