@@ -10,7 +10,7 @@ static const long     HX711_SATURATED_MIN = (long)0xFF800000L; // 0x800000 sign-
 static const long     HX711_SATURATED_MAX = 0x7FFFFFL;
 
 // ─── Configuration ───────────────────────────────────────────────────────────
-static float  s_cal_counts_per_N = 10000.0f; // placeholder – replace with real value
+static float  s_cal_counts_per_N = 44916.0f; // placeholder – replace with real value
 static float  s_filter_alpha     = 0.20f;
 static float  s_deadband_N       = 0.02f;
 static int8_t s_direction        = 1;
