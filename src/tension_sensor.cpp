@@ -8,6 +8,7 @@
 static const uint8_t  EXTRA_PULSES     = 1;   // 24 data + 1 = 25 pulses total
 static const long     HX711_SATURATED_MIN = (long)0xFF800000L; // 0x800000 sign-extended
 static const long     HX711_SATURATED_MAX = 0x7FFFFFL;
+static const uint32_t HX711_TARE_TIMEOUT_MS = 30;
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 static float  s_cal_counts_per_N = 44916.0f; // placeholder – replace with real value
@@ -36,6 +37,7 @@ static bool hx711_wait_ready(uint32_t timeout_ms)
     uint32_t t0 = millis();
     while (!hx711_ready()) {
         if ((millis() - t0) >= timeout_ms) return false;
+        delayMicroseconds(50);
     }
     return true;
 }
@@ -78,14 +80,27 @@ static long hx711_average(uint8_t samples, uint32_t timeout_ms)
     if (samples == 0) samples = 1;
     int64_t sum = 0;
     uint8_t count = 0;
+    long v_min = LONG_MAX;
+    long v_max = LONG_MIN;
+
     for (uint8_t i = 0; i < samples; i++) {
         if (!hx711_wait_ready(timeout_ms)) break;
         long v = hx711_read_one();
         if (v == LONG_MIN) continue;
         sum += v;
+        if (v < v_min) v_min = v;
+        if (v > v_max) v_max = v;
         count++;
     }
     if (count == 0) return LONG_MIN;
+
+    // For >=3 samples, trimmed mean (drop one min + one max) for better tare robustness.
+    if (count >= 3) {
+        sum -= v_min;
+        sum -= v_max;
+        count -= 2;
+    }
+
     return (long)(sum / count);
 }
 
@@ -139,7 +154,7 @@ void tension_init()
 // HX711 at 80SPS → each sample up to 13ms. 16 samples ≈ 200ms total max.
 bool tension_tare(uint8_t samples)
 {
-    long avg = hx711_average(samples, 30);
+    long avg = hx711_average(samples, HX711_TARE_TIMEOUT_MS);
     if (avg == LONG_MIN) return false;
 
     s_tare_offset = avg;
@@ -164,7 +179,7 @@ bool tension_update()
 
     float force = adc_to_force(raw);
 
-    if (isnan(force) || isinf(force)) {
+    if (!isfinite(force)) {
         s_data.valid = false;
         return false;
     }
