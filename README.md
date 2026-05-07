@@ -1,65 +1,75 @@
-# TM_tal220b
-Tension Measurement, Nucleo_g431rb
+# STM32 Tether Tension Firmware Description
 
-## 功能更新
+## 1. Purpose
 
-支持方向修正
+This firmware is used for tether tension measurement with an STM32 + HX711 + TAL220B system. Starting from the raw HX711 ADC count, the firmware converts the signal to load-cell force, applies low-pass filtering and deadband processing, then applies the pulley geometry correction to estimate the actual tether tension.
 
-支持硬件去皮
+The processing chain is:
 
-支持装机后软件置零
+```text
+raw_adc -> F_raw_loadcell_N -> F_filter_loadcell_N -> geometry correction -> T_tether_N
+```
 
-支持快速高频更新
+## 2. Program Logic
 
-## 文件更新
+1. Initialize HX711 pins and internal state.
+2. Perform one tare operation at startup and store the no-load ADC average as the zero offset.
+3. Continuously read the raw HX711 ADC count `raw_adc`.
+4. Convert ADC count to load-cell-axis force using the calibration factor:
 
-loadcell 文件集成到 tension_sensor
+```text
+F_raw_loadcell_N = direction * (raw_adc - tare_offset) / counts_per_N
+```
 
-## 更新支持在线命令
-tare  硬件去皮。传感器此时应该不受力，或者处于你定义的机械零点状态  
+5. Apply a first-order low-pass filter to obtain `F_filter_loadcell_N`.
+6. Apply a deadband near zero to reduce the effect of zero-load noise.
+7. Convert the filtered load-cell force to actual tether tension using the pulley/load-cell geometry:
 
-tare 20  硬件去皮。这里的 20 表示去皮时取 20 个样本做平均。
+```text
+T_tether_N = F_filter_loadcell_N / [2 * sin(wrap_angle / 2) * cos(load_axis_angle)]
+```
 
-zero  软件置零
+With the current geometry:
 
-clearzero 清除软件零点
+```text
+geometry_factor = 1.931968
+T_tether_N ≈ 0.5176 * F_filter_loadcell_N
+```
 
-alpha 0.6  设置低通滤波系数。程序使用一阶低通滤波
+## 3. Key Parameters
 
-dir -1  设置力的方向（负）
+The key parameters are located near the beginning of `src/tension_sensor.cpp`.
 
-deadband 0.02  设置死区。当最终张力绝对值小于 0.02 N 时，直接输出 0。
+| Parameter | Current Value | Description |
+|---|---:|---|
+| `COUNTS_PER_N_LOADCELL` | `44916.0` | Load-cell calibration factor in counts/N |
+| `FORCE_DIRECTION` | `1` | Force sign correction; change to `-1` if loading gives negative force |
+| `FILTER_ALPHA` | `0.20` | First-order low-pass coefficient; larger is faster, smaller is smoother |
+| `DEADBAND_LOADCELL_N` | `0.02` | Load-cell force deadband for suppressing near-zero noise |
+| `WRAP_ANGLE_DEG` | `161.99` | Tether wrap angle in degrees |
+| `LOAD_AXIS_ANGLE_DEG` | `12.03` | Angle between resultant force and load-cell sensing axis in degrees |
 
-avg 1  设置每次读取时的平均采样点数。读若干个样本后取平均，再作为本次结果。
+## 4. CSV Output
 
-cal 10000  设置标定系数 counts_per_N。calibration 就是每 1 N 对应多少 ADC counts。决定了 ADC 原始值怎么换算成牛顿
+The serial CSV output is:
 
-period 20  设置绘图输出周期，单位是毫秒
+```text
+timestamp_ms,raw_adc,F_raw_loadcell_N,F_filter_loadcell_N,T_tether_N,saturated
+```
 
-plot on  开启绘图输出。
+| Column | Meaning |
+|---|---|
+| `timestamp_ms` | Time since STM32 startup, in ms |
+| `raw_adc` | Raw HX711 ADC count |
+| `F_raw_loadcell_N` | Unfiltered load-cell-axis force |
+| `F_filter_loadcell_N` | Filtered and deadbanded load-cell-axis force |
+| `T_tether_N` | Geometry-corrected actual tether tension |
+| `saturated` | HX711 full-scale saturation flag; `1` means saturated |
 
-plot off  关闭绘图输出。
+## 5. Notes
 
-status  查看信息
+`COUNTS_PER_N_LOADCELL` should be determined from a static calibration test. If the calibration is performed directly on the load-cell axis, the geometry correction should be kept. If the complete pulley/tether mechanism is calibrated directly against actual tether tension, the geometry correction should not be applied again.
 
-valid：当前数据是否有效  
-raw_adc：HX711 原始 ADC 值
-raw_force_N：原始力值  
-force_N：最终输出张力  
-offset：硬件去皮偏置  
-zero_N：软件零点  
-calibration：标定系数  
-alpha：滤波系数  
-deadband_N：死区  
-avg_samples：平均采样点数  
-direction：方向  
-plot_enabled：是否输出绘图数据  
-plot_period_ms：绘图输出周期  
+Runtime parameter setters have been removed. To change calibration, filtering, deadband, or geometry parameters, edit the constants in `src/tension_sensor.cpp` and rebuild/upload the firmware.
 
-help  显示所有可用命令列表
-
-
-### Application to the Project
-
-Use the dynamic response results to justify the selected filter parameter for tethered UAV tension monitoring.
 
